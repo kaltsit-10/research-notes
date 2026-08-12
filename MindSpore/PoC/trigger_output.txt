@@ -1,0 +1,6 @@
+$ python trigger.py poc_heapoverflow.ckpt
+
+RETURN-NORMALLY
+free(): invalid next size (fast)
+timeout: the monitored command dumped core
+rc=134

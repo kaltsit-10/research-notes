@@ -1,0 +1,25 @@
+diff --git a/src/paramdict.cpp b/src/paramdict.cpp
+index 092927a..aaaaeda 100644
+--- a/src/paramdict.cpp
++++ b/src/paramdict.cpp
+@@ -588,8 +588,20 @@ int ParamDict::load_param_bin(const DataReader& dr)
+             swap_endianness_32(&len);
+ #endif
+ 
++            if (len <= 0)
++            {
++                NCNN_LOGE("invalid array length %d (id=%d)", len, id);
++                return -1;
++            }
++
+             d->params[id].v.create(len);
+ 
++            if (d->params[id].v.empty())
++            {
++                NCNN_LOGE("ParamDict create array failed (len=%d, id=%d)", len, id);
++                return -1;
++            }
++
+             float* ptr = d->params[id].v;
+             nread = dr.read(ptr, sizeof(float) * len);
+             if (nread != sizeof(float) * len)

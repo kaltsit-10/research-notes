@@ -1,0 +1,12 @@
+diff --git a/src/layer/yolodetectionoutput.cpp b/src/layer/yolodetectionoutput.cpp
+index 1230691..96301bd 100644
+--- a/src/layer/yolodetectionoutput.cpp
++++ b/src/layer/yolodetectionoutput.cpp
+@@ -11,6 +11,7 @@ YoloDetectionOutput::YoloDetectionOutput()
+ {
+     one_blob_only = false;
+     support_inplace = true;
++    softmax = 0;
+ }
+ 
+ int YoloDetectionOutput::load_param(const ParamDict& pd)

@@ -1,0 +1,36 @@
+{
+  "change": "Increase live DSH provider retry tolerance for transient connection failures",
+  "settings_file": "C:\\Users\\asus\\.dsh\\settings.yaml",
+  "provider": "openai",
+  "configuration": {
+    "timeoutMs": 120000,
+    "streamIdleTimeoutMs": 600000,
+    "retryPolicy": {
+      "mode": "normal",
+      "maxRetries": 6,
+      "backoff": {
+        "initialDelayMs": 1500,
+        "maxDelayMs": 30000,
+        "jitterRatio": 0.1
+      }
+    }
+  },
+  "scope": [
+    "transient transport, timeout, server and empty-response failures",
+    "the configured openai provider route"
+  ],
+  "verification": {
+    "settings_namespace": "llm-pi-ai",
+    "applies": "live",
+    "live_revision": 1,
+    "resolver": "PASS",
+    "gui_url": "http://127.0.0.1:3080/",
+    "gui_http_status": 200,
+    "host_process_alive": true
+  },
+  "limitations": [
+    "This does not prevent permanent provider outages or invalid credentials.",
+    "The current provider configuration is live-reloaded by dsh-settings-file; a future dsh implementation may require restart if that contract changes.",
+    "No external failure was intentionally generated during verification."
+  ]
+}

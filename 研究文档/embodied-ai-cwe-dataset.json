@@ -1,0 +1,264 @@
+{
+  "dataset_meta": {
+    "name": "embodied-ai-component-cwe-dataset",
+    "version": "1.0",
+    "date": "2026-08-22",
+    "purpose": "具身智能 AI 组件输入校验与修复验证实证语料（用于防御性工具研究与综述）",
+    "components": 5,
+    "findings": 34,
+    "evidence_levels": ["L3-实测", "ASan-PoC", "源码确认", "静态确认"],
+    "boundary": "授权本地/离线研究；不包含利用链；物理影响均标注待实机验证"
+  },
+  "components": [
+    {
+      "name": "Tencent ncnn",
+      "type": "神经网络推理引擎（模型解析）",
+      "repo": "https://github.com/Tencent/ncnn",
+      "version_anchor": "master 946fe3f / tag 20260526 (e54f7b1)",
+      "fix_status": "上游未修复；fork PR #6922 (head 408f6df) 待合入",
+      "findings": [
+        {"id": "NCNN-A", "cwe": 400, "title": "header layer_count/blob_count 无上限 → 137GB OOM", "loc": "src/net.cpp L1699-1709", "evidence": "ASan allocator OOM", "fix": "PR #6922 ([1,1M] 上限)"},
+        {"id": "NCNN-B", "cwe": 248, "title": "per-layer bottom/top_count 负/巨大 → length_error/bad_alloc", "loc": "src/net.cpp L1762-1769", "evidence": "abort exit 134", "fix": "PR #6922 ([0,1M])"},
+        {"id": "NCNN-C", "cwe": 787, "title": "blob 索引越界 → d->blobs[idx] OOB 读+写", "loc": "src/net.cpp L1809/1822", "evidence": "ASan SEGV WRITE @1811, 149B PoC 3/3", "fix": "PR #6922 ([0,blob_count))"},
+        {"id": "NCNN-D", "cwe": 369, "title": "top_count=0 + shape-hint → 整数除零 FPE", "loc": "src/net.cpp L1848", "evidence": "FPE 实测", "fix": "PR #6922 (top_count>0 才处理)"},
+        {"id": "NCNN-E", "cwe": 476, "title": "paramdict 数组 len 未校验 → 96B NULL 解引用", "loc": "src/paramdict.cpp L581-591", "evidence": "ASan allocation-size-too-big", "fix": "上游 #6917/#6918/#6874 已覆盖"},
+        {"id": "NCNN-F", "cwe": 457, "title": "YoloDetectionOutput softmax 未初始化 → 析构 SEGV", "loc": "yolodetectionoutput.cpp", "evidence": "析构崩溃", "fix": "fork fix/ydo-softmax-init 待开 PR"},
+        {"id": "NCNN-G", "cwe": 787, "title": "负参数 id 越界写 (CVE-2026-50144)", "loc": "src/paramdict.cpp L612", "evidence": "SEGV WRITE", "fix": "上游 5a0288f2 已修（对照）"}
+      ]
+    },
+    {
+      "name": "Huawei MindSpore",
+      "type": "深度学习框架（checkpoint 加载）",
+      "repo": "https://github.com/mindspore-ai/mindspore",
+      "version_anchor": "2.8.0 / 2.10.0 / master",
+      "fix_status": "全部未修复（2.8.0+2.10.0+master 实测）",
+      "findings": [
+        {"id": "MS-1", "cwe": 789, "title": "load_checkpoint dims 内存放大 DoS（32B→40GB, 12.5亿倍）", "loc": "train/serialization.py → tensor_py.cc ConvertBytesToTensor", "evidence": "Try to alloca 40000000000", "fix": "无"},
+        {"id": "MS-2", "cwe": 787, "title": "CopyFromBuffer 堆溢出（dims 小 + content 大）", "loc": "ccsrc/pybind_api/ir/tensor_py.cc L504-537", "evidence": "8B 缓冲写 256B, free(): invalid next size, fastbin 污染", "fix": "无"},
+        {"id": "MS-3", "cwe": 787, "title": "负 dims (-5) 畸形 Parameter 静默存活 + 延迟崩溃", "loc": "parameter.py L308 (仅查 -1)", "evidence": "load 静默返回 + 退出 rc=-6", "fix": "无"}
+      ]
+    },
+    {
+      "name": "AgiBot agibot_x1_infer",
+      "type": "机器人推理/控制模块（AimRT 中间件）",
+      "repo": "https://github.com/AgibotTech/agibot_x1_infer",
+      "version_anchor": "commit 9e0b818 (2025-04-03)",
+      "fix_status": "全部未修复；16 个月无提交",
+      "findings": [
+        {"id": "X1-1", "cwe": 78, "title": "JoyStickModule 配置驱动 system() 命令注入", "loc": "joy_stick_module.cc:181-185", "evidence": "源码", "reach": "配置+按键（默认休眠）"},
+        {"id": "X1-2", "cwe": 125, "title": "button/axis 配置索引越界读（值外泄 /cmd_vel）", "loc": "joy_stick_module.cc:109/119/127-148/179", "evidence": "源码", "reach": "默认即达"},
+        {"id": "X1-3", "cwe": 787, "title": "target_pos 堆越界写", "loc": "joy_stick_module.cc:123-149", "evidence": "ASan heap-buffer-overflow WRITE", "reach": "默认即达"},
+        {"id": "X1-4", "cwe": 125, "title": "JointCmdCallback 平行数组越界读", "loc": "dcu_driver_module.cc:474-486", "evidence": "ASan PoC", "reach": "配置（sub 加 ros2）"},
+        {"id": "X1-5", "cwe": 125, "title": "WriteMotorCmd 越界读（map 跨消息累积）", "loc": "sim_module.cc:150-162", "evidence": "ASan PoC", "reach": "配置"},
+        {"id": "X1-6", "cwe": 125, "title": "ReadSensorData memcpy 源越界读", "loc": "sim_module.cc:143-145", "evidence": "ASan 3 变体", "reach": "模型文件（自由度不足）"},
+        {"id": "X1-7", "cwe": 125, "title": "RLController actions_size 不一致越界读写", "loc": "rl_controller.cc:96-120/156-160/210-217", "related_loc": "rl_controller.cc:247-254", "evidence": "ASan PoC", "reach": "配置"},
+        {"id": "X1-8", "cwe": 248, "title": "ControlModule .at() 未捕获异常 + 负索引", "loc": "control_module.cc:111-114", "evidence": "exit 0xC0000409", "reach": "配置/畸形消息"},
+        {"id": "X1-9", "cwe": 125, "title": "SetJointStateData 负索引/平行数组越界读", "loc": "controller_base.cc:20-24", "evidence": "ASan READ before region", "reach": "缺关节 JointState 消息"},
+        {"id": "X1-10", "cwe": 369, "title": "频率配置 0 值整数除零 SIGFPE", "loc": "joy_stick_module.cc:197 / control_module.cc:154", "evidence": "源码", "reach": "配置（freq:0）"},
+        {"id": "X1-11", "cwe": 476, "title": "SimModule 模型加载失败空指针解引用", "loc": "sim_module.cc:51,64-82", "evidence": "源码", "reach": "模型文件缺失"},
+        {"id": "X1-12", "cwe": 787, "title": "PowerFlowR can_id 无上界 → 堆越界读写", "loc": "power_flow.cpp:19-25,94-109", "evidence": "源码", "reach": "配置（can_id≥9）"},
+        {"id": "X1-13", "cwe": 125, "title": "Ankle 传动 YAML 加载 end() 解引用", "loc": "ankle_transmission.cc:55-66", "evidence": "源码", "reach": "配置（条目不足）"},
+        {"id": "X1-14", "cwe": 129, "title": "RLController observations_size 不一致 → propri_obs 越界写", "loc": "rl_controller.cc:196-232", "evidence": "源码", "reach": "配置"}
+      ]
+    },
+    {
+      "name": "AimRT (AgiBot)",
+      "type": "机器人中间件（C++20, net_plugin/JSON）",
+      "repo": "https://github.com/AimRT/AimRT",
+      "version_anchor": "main 19ae48ed / v1.7.0",
+      "fix_status": "全部未修复；仓库活跃（PR 合并快）",
+      "findings": [
+        {"id": "AR-1", "cwe": 787, "title": "WriteMemberNested 固定数组缺长度校验 → 越界写（远程）", "loc": "src/common/ros2_util/json_convert.h:153-177", "evidence": "源码触发链确认，网络可达", "reach": "网络可达（HTTP channel/RPC + JSON）"},
+        {"id": "AR-2", "cwe": 248, "title": "HTTP 请求头注入 ctx meta → stoull 未捕获异常 DoS", "loc": "http_rpc_backend.cc:172-176 + service_introspection_plugin.cc:172,213", "evidence": "源码", "reach": "网络可达（条件性）"},
+        {"id": "AR-3", "cwe": 125, "title": "TCP/UDP channel 配置解析 v[1] 越界访问", "loc": "tcp_channel_backend.cc:111-114 / udp_channel_backend.cc:107-110", "evidence": "源码", "reach": "配置驱动（启动期）"},
+        {"id": "AR-4", "cwe": 125, "title": "HTTP 静态文件空 path back() UB", "loc": "asio_http_svr.h:389-390", "evidence": "源码", "reach": "需 doc_root 启用"}
+      ]
+    },
+    {
+      "name": "Unitree xr_teleoperate",
+      "type": "XR 遥操作软件栈（Python, vuer/DDS/ZMQ）",
+      "repo": "https://github.com/unitreerobotics/xr_teleoperate",
+      "version_anchor": "main HEAD 845b25a32f (2026-08-03)",
+      "fix_status": "未修复；已备 GHSA/PR 双通道材料",
+      "findings": [
+        {"id": "VUL-01", "cwe": 306, "title": "未认证 Vuer 遥操作输入通道 → 局域网伪造 WS 驱动控制链路", "loc": "televuer.py L91 / vuer server.py L1198", "evidence": "L3 实测（WSS 无凭据握手注入 sol_q=±1e5）", "cvss": "9.1/8.1"},
+        {"id": "VUL-02", "cwe": 502, "title": "IK 模型缓存 pickle.load 输入校验缺口", "loc": "robot_arm_ik.py L232/510/814/1121/1397/1672/1935", "related_loc": "robot_arm_ik.py L233/511/815/1122/1398/1673/1936", "evidence": "静态确认", "cvss": "8.4"},
+        {"id": "VUL-03", "cwe": 306, "title": "unitree_sdk2py DDS 通道默认无认证/加密", "loc": "ChannelFactoryInitialize(id=0), CycloneDDS domain 0", "evidence": "L3 实测（窃听+伪造 rt/lowcmd 被接收）", "cvss": "8.3"},
+        {"id": "VUL-04", "cwe": 306, "title": "teleimager 相机视频流与配置无认证", "loc": "ZMQ PUB 0.0.0.0:55555-57 / REP 60000", "evidence": "L3 实测（窃取 JPEG 帧+GET_DATA）", "cvss": "6.5"},
+        {"id": "VUL-05", "cwe": 20, "title": "控制器输入无范围校验：伪造 thumbstick 突破 0.3 限速 500x", "loc": "teleop_hand_and_arm.py L357-359", "evidence": "L3 实测", "cvss": "6.5"},
+        {"id": "VUL-06", "cwe": 306, "title": "本地 ZMQ IPC 命令通道无认证", "loc": "ipc.py IPC_Server", "evidence": "静态确认", "cvss": "3.5"}
+      ]
+    }
+  ],
+  "repair_pairs": [
+    {
+      "id": "NCNN-PARAMDICT-ID-RANGE",
+      "component": "Tencent ncnn",
+      "sample_role": "verified-repair-pair",
+      "before": "NCNN/复现工具/paramdict_vuln.cpp",
+      "after": "NCNN/复现工具/paramdict_fix.cpp",
+      "contract_type": "parameter-index-range",
+      "evidence_status": "source-confirmed",
+      "repair_status": "repair-suggested",
+      "verification_status": "verified",
+      "static_evidence": "id < 0 || id >= NCNN_MAX_PARAM_COUNT on text and binary paths",
+      "runtime_verdict": "PASS",
+      "note": "本地复现资产的修复前后对照；不改变 34 条 finding 计数"
+    },
+    {
+      "id": "NCNN-PR-6922-NET-GUARDS",
+      "component": "Tencent ncnn",
+      "sample_role": "documented-local-repair-pair",
+      "before": "NCNN/上报材料/PR-6922合并修复.patch preimage",
+      "after": "TOOLTEST_NCNN/net.cpp",
+      "contract_type": "parser-count-and-blob-index",
+      "evidence_status": "local-patch-and-record",
+      "repair_status": "partially-verified",
+      "verification_status": "verified-local-scoped-runtime",
+      "static_evidence": "local PR patch covers text/bin header counts, per-layer counts, binary blob indices, and top_count shape-hint guard",
+      "patch_application_evidence": {
+        "source": "TOOLTEST_NCNN/net.cpp",
+        "patch": "NCNN/上报材料/PR-6922合并修复.patch",
+        "target_path": "src/net.cpp",
+        "forward_applicable": false,
+        "reverse_applicable": true,
+        "interpretation": "current local snapshot accepts reverse patch check, consistent with the patch postimage",
+        "text_count_fragment": {
+          "patch": "NCNN/上报材料/PR-text层头校验修复.patch",
+          "forward_applicable": false,
+          "reverse_applicable": true,
+          "scope": "TEXT layer_count/blob_count and bottom_count/top_count bounds",
+          "does_not_cover": "same-record layer-header token contract"
+        },
+        "bin_blob_fragment": {
+          "patch": "NCNN/上报材料/PR-blob索引修复.patch",
+          "forward_applicable": false,
+          "reverse_applicable": true,
+          "addition_subset_of_merged_patch": true,
+          "static_bin_unchecked_blob_index_postimage": 0,
+          "static_bin_unchecked_blob_index_reverse_preimage": 2,
+          "scope": "BIN header/count and bottom/top blob index guards",
+          "does_not_cover": "TEXT guards or top_count shape-hint division handling",
+          "measurement_note": "isolated reverse-patch static guard-recognition comparison; not runtime verification"
+        }
+      },
+      "runtime_preflight_evidence": {
+        "launcher_preflight_attempted": true,
+        "actual_harness_executed": false,
+        "verdict": "REVIEW",
+        "infrastructure_failures": 2,
+        "infrastructure_reasons": {
+          "wsl-unavailable": 2
+        },
+        "reason": "historical preflight before Hyper-V was enabled; superseded by later successful WSL2 startup",
+        "superseded_by": "runtime_verification_evidence"
+      },
+      "runtime_verification_evidence": {
+        "artifact": ".dsh/skills/cwe-repair/examples/ncnn_pr6922_runtime_evidence.json",
+        "source_commit": "408f6df63c1c6076c0d7294f5fcee55f994d93b5",
+        "actual_harness_executed": true,
+        "harness": "/home/kaltsit/vuln_repro/ncnn_fuzz/pr_work/loadpoc_verify_combined",
+        "bin_scope": {
+          "malicious_rejected": "2/2",
+          "benign_passed": "1/1",
+          "verdict": "PASS"
+        },
+        "text_count_scope": {
+          "malicious_rejected": "1/1",
+          "benign_passed": "1/1",
+          "verdict": "PASS"
+        },
+        "text_blob_index_scope": {
+          "malicious_rejected": "0/1",
+          "benign_passed": "1/1",
+          "verdict": "REVIEW",
+          "residual": "F1_bottom_oob remains an ASan abort in combined text path"
+        },
+        "infrastructure_failures": 0,
+        "scope_verdict": "PASS-for-count-and-bin-index;REVIEW-for-text-blob-index-residual",
+        "strict_benchmark_eligible": false
+      },
+      "runtime_verdict": "PASS-scoped-count-and-bin-index;REVIEW-text-blob-index-residual",
+      "strict_benchmark_eligible": false,
+      "note": "用于修复对照和 guarded/fixed 回归；不改变 34 条 finding 计数或当前 leaderboard。"
+    },
+    {
+      "id": "NCNN-PARAMDICT-LEN-FIXTURE",
+      "component": "Tencent ncnn",
+      "sample_role": "local-reduced-binary-guard-fixture",
+      "before": ".dsh/skills/cwe-repair/examples/ncnn_paramdict_len_before.cpp",
+      "after": ".dsh/skills/cwe-repair/examples/ncnn_paramdict_len_after.cpp",
+      "contract_type": "parameter-array-length-and-allocation",
+      "evidence_status": "local-reduced-fixture",
+      "repair_status": "partially-guarded",
+      "verification_status": "static-regression-only",
+      "static_evidence": "len <= 0 rejection plus Mat::empty() check before subsequent read",
+      "patch_application_evidence": {
+        "source": "NCNN/复现工具/paramdict_vuln.cpp",
+        "patch": "NCNN/上报材料/PR-paramdict数组len校验修复.patch",
+        "target_path": "src/paramdict.cpp",
+        "application_mode": "mapped-hunk-compatible",
+        "direct_artifact_path_applicable": false,
+        "direct_artifact_path_reason": "patch targets src/paramdict.cpp while the local artifact is named paramdict_vuln.cpp",
+        "forward_applicable": true,
+        "reverse_applicable": false,
+        "array_length_contract_candidates_before": 2,
+        "array_length_contract_candidates_after": 1,
+        "residual_path": "text load_param old-style array path remains REVIEW",
+        "runtime_gap": "no accepted positive-array BIN benign input is available in the local record"
+      },
+      "runtime_verdict": "REVIEW-not-run",
+      "strict_benchmark_eligible": false,
+      "note": "由本地 PR-paramdict数组len校验修复.patch 缩减为可审阅 fixture；以 src/paramdict.cpp 映射后 hunk-compatible，仅覆盖 BIN 分支，不能冒充完整 ncnn 构建、运行验证或 TEXT 路径修复。"
+    },
+    {
+      "id": "NCNN-TEXT-BLOB-INDEX-FIXTURE",
+      "component": "Tencent ncnn",
+      "sample_role": "proposed-fixed-fixture",
+      "before": ".dsh/skills/cwe-repair/examples/ncnn_text_blob_index_before.cpp",
+      "after": ".dsh/skills/cwe-repair/examples/ncnn_text_blob_index_after.cpp",
+      "contract_type": "text-parser-blob-capacity",
+      "evidence_status": "local-reduced-fixture",
+      "repair_status": "repair-suggested",
+      "verification_status": "static-regression-only",
+      "static_evidence": "blob_index < 0 || blob_index >= blob_count before text-path d->blobs access",
+      "runtime_verdict": "REVIEW-not-run",
+      "strict_benchmark_eligible": false,
+      "note": "根据本地 F1 文本路径记录建立的提议修复对照；不是上游合并 patch，不计入严格 benchmark。"
+    },
+    {
+      "id": "NCNN-YOLO-SOFTMAX-FIXTURE",
+      "component": "Tencent ncnn",
+      "sample_role": "documented-fixed-fixture",
+      "before": ".dsh/skills/cwe-repair/examples/ncnn_yolo_softmax_before.cpp",
+      "after": ".dsh/skills/cwe-repair/examples/ncnn_yolo_softmax_after.cpp",
+      "contract_type": "member-pointer-initialization",
+      "evidence_status": "local-reduced-fixture",
+      "repair_status": "repair-suggested",
+      "verification_status": "static-regression-only",
+      "static_evidence": "constructor initializes softmax to null before destroy_pipeline conditional use",
+      "local_patch_evidence": {
+        "patch": "NCNN/上报材料/PR-YoloDetectionOutput-softmax初始化修复.patch",
+        "added_lines": 1,
+        "source_snapshot": "not-locally-available",
+        "source_proof": false
+      },
+      "runtime_verdict": "REVIEW-not-run",
+      "strict_benchmark_eligible": false,
+      "note": "由本地 YoloDetectionOutput 修复 patch 缩减而来；保留为生命周期/初始化对照，不扩展严格 finding 统计。"
+    }
+  ],
+  "cross_cutting": {
+    "common_root_causes": [
+      "输入长度/索引/数量未与容量比对（占 ~60%）",
+      "文本/二进制或新旧路径修复不对称（兄弟路径案例）",
+      "安全函数被误用/绕过（memcpy_s 参数语义错、pickle、system）",
+      "默认配置可达性分层（默认即达 vs 配置后可达）"
+    ],
+    "cwe_distribution": {
+      "CWE-125/787": 16, "CWE-369": 3, "CWE-190": 0, "CWE-248": 2,
+      "CWE-306": 4, "CWE-78": 1, "CWE-502": 1, "CWE-476": 2, "CWE-789": 1, "CWE-129": 1
+    },
+    "note": "实测验证闭环（cwe-repair skill）可覆盖 CWE-125/787/190/369/476 的检测修复验证；CWE-306/502/78（认证/反序列化/注入）为逻辑类，需不同模板"
+  }
+}

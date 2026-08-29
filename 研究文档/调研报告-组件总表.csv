@@ -1,0 +1,32 @@
+类别,组件,厂商,国籍,C++核心,Fuzz情况,CVE情况,蓝海度,推荐度,备注
+推理引擎,MindSpore 昇思,华为,国产,是,外部审计少,未修DoS+CVE-2021堆溢出,高,5,checkpoint反序列化44B→37GB
+推理引擎,NCNN,腾讯,国产,是,少,CVE-2026-50144堆越界,高,5,param加载负ID越界写
+推理引擎,PaddlePaddle 飞桨,百度,国产,是,少,Critical RCE 9.8+PDSA系列,中,4,pickle反序列化RCE
+推理引擎,MNN,阿里,国产,是,几乎无,少,高,4,移动端推理蓝海
+推理引擎,OneFlow,OneFlow,国产,是,无,无公开,高,3,开源未审计
+推理引擎,MegEngine 天元,旷视,国产,是,无,无公开,高,3,开源未审计
+推理引擎,llama.cpp,社区,国际,是,部分,10+ CVE GGUF,低,3,整数溢出/堆溢出
+推理引擎,Ollama,社区,国际,Go+C++,有,12+ CVE 9.1-9.8,低,3,默认无认证
+推理引擎,vLLM,社区,国际,是,有,RCE 9.8+221整数截断,低,2,GPU buffer溢出风险
+LLM部署,vLLM,社区,国际,是,有,CVE-2026-22778 RCE,低,2,ShadowMQ
+LLM部署,SGLang,社区,国际,是,有,ShadowMQ,低,2,
+LLM部署,TensorRT-LLM,NVIDIA,国际,是,有,ShadowMQ,低,2,
+LLM部署,Ollama,社区,国际,Go,有,12+ CVE,低,3,封装llama.cpp
+向量库,Milvus,Zilliz,国产,Go+C++,无,Critical认证绕过9.8,高,4,多端口未认证
+向量库,Chroma,社区,国际,Python,无,少,高,3,
+向量库,Qdrant,社区,国际,Rust,无,少,高,3,
+向量库,Weaviate,社区,国际,Go,无,少,高,3,
+Agent框架,LangChain,社区,国际,Python,无,多为传递依赖,中,2,
+Agent框架,Langflow,社区,国际,Python,无,CVE-2026-27966 RCE 9.8,中,3,危险代码工具
+Agent框架,AutoGPT/MetaGPT,社区,国际,Python,无,少,高,3,多智能体未审
+MLOps,MLflow,Databricks,国际,Python,无,20+漏洞 RCE/路径遍历,中,3,模型供应链RCE
+MLOps,Kubeflow,社区,国际,Go,无,少,高,3,
+机器人栈,宇树 Unitree,宇树,国产,混合,无,无公开,高,4,机器狗部署量大
+机器人栈,智元 Agibot,智元,国产,混合,无,无公开,高,4,GO-1 VLA模型
+机器人栈,优必选/傅利叶/星动,国产,混合,无,无公开,高,3,软件栈不透明
+世界模型,书生 S01-Open,上海AI实验室,国产,Python,无,无公开攻击,高,4,开源世界模型
+世界模型,可灵 Kling,快手,国产,❌,无,无公开,高,3,非开源
+世界模型,智元 GO-1,智元,国产,部分,无,无公开,高,4,VLA标杆
+世界模型,Qwen2.5-VL,阿里,国产,可CPU跑,无,少,中,3,开源VLA
+世界模型,OpenVLA,社区,国际,可跑,无,有,低,2,被研究多
+中间件,ROS2/FastDDS,社区,国际,是,无,无公开,高,4,DDS协议可fuzz
